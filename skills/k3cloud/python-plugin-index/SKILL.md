@@ -1,14 +1,27 @@
 ---
 name: python-plugin-index
 title: K/3 Cloud Python 插件开发索引
-description: 写 K/3 Cloud IronPython 2.7 表单插件(BeforeSave 拦截 / 字段联动 / 按钮点击 / DataChanged)时加载。本 skill 本身是索引,告诉你有哪些子文件可拉,遇到具体问题按需用 load_skill_file 拉详细的事件签名 / API 表 / 模板 / 异常处理姿势。Agent 准备生成 pyBody 传给 k3cloud_* 工具前先加载它。
+description: 写 K/3 Cloud IronPython 2.7 表单插件(BeforeSave 拦截 / 字段联动 / 按钮点击 / DataChanged)或列表插件(AfterBarItemClick / ListRowDoubleClick / FormatCellValue)时加载。本 skill 本身是索引,告诉你有哪些子文件可拉,遇到具体问题按需用 load_skill_file 拉详细的事件签名 / API 表 / 模板 / 异常处理姿势。Agent 准备生成 pyBody 传给 k3cloud_register_python_plugins / k3cloud_register_list_python_plugins 前先加载它。
 version: 1.0.0
 category: plugin-dev
 ---
 
 # K/3 Cloud Python 插件开发索引
 
-本 skill 覆盖 K/3 Cloud **表单插件**(`FormPlugins` 节点,继承 `AbstractBillPlugIn`)的开发。其他插件类型(操作插件、转换插件、打印插件、报表插件)OpenDeploy v0.1 **不自动化**——如果用户需要这些,查 `k3cloud/bos-features-index` 的 `references/plugin-types` 知道全谱,告知用户手工在 BOS Designer 注册。
+本 skill 覆盖四类 K/3 Cloud Python 插件:
+
+| 类型 | wire 节点 | 基类 | 注册工具 | 触发时机 |
+|---|---|---|---|---|
+| **表单插件** | `<Form><FormPlugins>` | `AbstractBillPlugIn` / `AbstractDynamicFormPlugIn` | `k3cloud_register_python_plugins` | 用户进入**单据录入页**(新建/查看/修改单据) |
+| **列表插件**(Plan 7.2) | `<Form><ListPlugins>` | `AbstractListPlugIn` | `k3cloud_register_list_python_plugins` | 用户进入**列表页**(查列表/双击行/列表工具栏点按钮) |
+| **操作服务插件**(Plan 7.3) | `<FormOperation><ServicePlugins>` | `AbstractOperationServicePlugIn`(Python 走 `PythonOperationServicePlugIn`) | `k3cloud_add_custom_operation(pyBody=..., pluginClassName=...)` inline | 用户点**该具体操作按钮**(操作绑定 service plugin,跟单据生命周期解耦) |
+| **账表插件**(Plan 7.6 解锁) | `<Form><SysReportServicePlugins>` (action="edit" 模式) | `AbstractSysReportPlugIn` + `AbstractSysReportServicePlugIn`(Python 走 `PythonReportPlugIn`) | `k3cloud_create_from_template`(账表对象创建) + `k3cloud_register_sysreport_python_plugins` | 用户进入**账表页**(报表查询 / 单元格点击 / SQL 构造) |
+
+前两类挂在父对象 Form 下,操作服务插件挂在具体某个 FormOperation 内 — 跟着操作 key 走,只在那个操作触发时执行。账表插件挂在 SysReport 元数据对象的 `<SysReportServicePlugins>` 节点(v0.2 起可全自动完成)。
+
+客户实战频次:`AfterBindData`(表单 49 处)/ `AfterBarItemClick`(列表 17 + 表单 32 处)/ `OnPreparePropertys`(操作服务 36 处)分别是三类的最高频事件。
+
+其他插件类型(转换插件、打印插件、报表插件)OpenDeploy **不自动化**——如果用户需要这些,查 `k3cloud/bos-features-index` 的 `references/plugin-types` 知道全谱,告知用户手工在 BOS Designer 注册。
 
 ## 运行环境速览
 
@@ -19,6 +32,7 @@ category: plugin-dev
 
 ## 最小模板
 
+**表单插件**:
 ```python
 import clr
 clr.AddReference('Kingdee.BOS')
@@ -32,7 +46,35 @@ class MyPlugIn(AbstractBillPlugIn):
     pass
 ```
 
-**关键**:`class MyPlugIn` 的类名**不影响注册**——注册在 `FKERNELXML` 的 `<ClassName>` 元素里,是 OpenDeploy 工具的 `pluginName` 参数。脚本里的类名只供可读。
+**列表插件**(Plan 7.2):
+```python
+import clr
+clr.AddReference('Kingdee.BOS')
+clr.AddReference('Kingdee.BOS.Core')
+from Kingdee.BOS.Core.List.PlugIn import AbstractListPlugIn
+from Kingdee.BOS.Core.List.PlugIn.Args import *
+from Kingdee.BOS import KDException
+
+class MyListPlugIn(AbstractListPlugIn):
+    # 列表事件 override 方法写这里(如 AfterBarItemClick / ListRowDoubleClick)
+    pass
+```
+
+**操作服务插件**(Plan 7.3):
+```python
+import clr
+clr.AddReference('Kingdee.BOS')
+clr.AddReference('Kingdee.BOS.Core')
+from Kingdee.BOS.Core.DynamicForm.PlugIn import AbstractOperationServicePlugIn
+from Kingdee.BOS.Core.DynamicForm.PlugIn.Args import *
+from Kingdee.BOS import KDException
+
+class MyOpServicePlugIn(AbstractOperationServicePlugIn):
+    # 操作生命周期 override(如 OnPreparePropertys / BeginOperationTransaction)
+    pass
+```
+
+**关键**:`class MyPlugIn` 的类名**不影响注册**——注册在 `FKERNELXML` 的 `<ClassName>` 元素里,是 OpenDeploy 工具的 `className` 参数。脚本里的类名只供可读。挂错位置(列表事件写到表单插件 / 表单事件写到列表插件)**不触发**:确保事件名在所选基类的 events-reference 段落里出现。
 
 ## 子文件导航(按需 load_skill_file)
 
@@ -67,8 +109,41 @@ class MyPlugIn(AbstractBillPlugIn):
 
 ```
 k3cloud_list_extensions         # 查父单据有无现成扩展可复用
-  ├─ 有 → k3cloud_register_python_plugins(挂到已有扩展)
-  └─ 无 → k3cloud_create_extension(建新扩展) → k3cloud_register_python_plugins(挂插件)
+  ├─ 有 → k3cloud_register_python_plugins        (表单插件)
+  │      或 k3cloud_register_list_python_plugins (列表插件,Plan 7.2)
+  │      或 k3cloud_add_custom_operation(pyBody=..., pluginClassName=...) (操作服务插件 inline,Plan 7.3)
+  └─ 无 → k3cloud_create_extension(建新扩展) → 注册工具同上
 ```
+
+账表插件(新增 v0.2):
+
+```
+1. k3cloud_create_from_template(templateId='BOS_SimpleSysReport', ...)  # 创建新账表对象(或挂在已有原厂账表的扩展上)
+2. k3cloud_register_sysreport_python_plugins(formId, className, pyBody)  # 挂 Python 服务插件
+```
+
+四类插件选哪个看用户需求:
+- **用户在单据录入页要触发的逻辑** → 表单插件
+- **用户在列表页要触发的逻辑**(典型:列表自定义按钮、列表双击行) → 列表插件
+- **新建一个自定义操作 + 一段 inline 逻辑**(操作和逻辑紧绑) → 操作服务插件
+- **自定义报表 / 账表查询逻辑**(SQL 构造 / 数据展示) → 账表插件
+
+**特别注意:内置操作(Audit / UnAudit / Delete / Submit)的拦截** 推荐走**表单插件**的 `BeforeDoOperation(self, e)` 事件 + 判 `e.Operation.OperationName == "UnAudit"` 等,设 `e.Cancel = True`。比操作服务插件路径轻量、UI 弹窗友好,客户实战最常见。详见 events-reference 的"审核 / 反审核 / 弃审拦截"段。
+
+挂错位置插件**不触发**(form 事件挂到 list 不跑;表单插件的事件挂到列表插件类继承下来不被识别)。
+
+### 典型联动:**列表按钮 + 列表插件**
+
+客户最常见的列表二开需求是"在列表上加自定义按钮触发批量逻辑"(memory `reference_customer_k3_plugin_projects` 实战:`AfterBarItemClick` 17 处)。完整步骤:
+
+```
+1. k3cloud_add_custom_operation         # 创建自定义操作 (operationId=45,挂 servicePlugin 可选)
+2. k3cloud_add_toolbar_button           # target.kind='list' 挂列表菜单
+   └─ target: { kind: 'list' }
+3. k3cloud_register_list_python_plugins # 写 AfterBarItemClick 实现按钮行为
+   └─ 内部判 e.BarItemKey 分发到具体逻辑
+```
+
+`target.kind` 选错(挂到 form 顶层菜单),客户在列表页看不到按钮 —— 不报错但功能等同没生效。
 
 两条路之后都要**提醒用户**:BOS Designer F5 刷新 / 客户端重登测试。OpenDeploy 不自动刷缓存。
